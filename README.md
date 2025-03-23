@@ -408,12 +408,12 @@ Go to http://172.16.7.115:8080/ and enter username admin and password as admin
 Setting up Hadoop cluster
 
 1. Landing page
-Click on “Launch Install Wizard” to start cluster setup
+Click on "Launch Install Wizard" to start cluster setup
 
 2. Cluster Name
 Give you cluster a good name.
 Note: This is just a simple name for cluster, it is not that significant, 
-so don’t worry about it and choose any name for it.
+so don't worry about it and choose any name for it.
 ie : YOGYA_DEV_CLUSTER
 
 3. Stack selection
@@ -1024,7 +1024,7 @@ firewall-cmd --reload
 Installing R Studio Server
 Installing R Studio on the same local network as the Spark cluster that we want to connect to - in our case directly on the master node - is the recommended approach for using R Studio with a remote Spark Cluster. Using a local version of R Studio to connect to a remote Spark cluster is prone to the same networking issues as trying to use the Spark shell remotely in client-mode (see part 2).
 
-First of all we need the URL for the latest version of R Studio Server. Preview versions can be found here while stable releases can be found here. At the time of writing Sparklyr integration is a preview feature so I’m using the latest preview version of R Studio Server for 64bit RedHat/CentOS (should this fail at any point, then revert back to the latest stable release as all of the scripts used in this post will still run). Picking-up where we left-off in the master node’s terminal window, execute the following commands,
+First of all we need the URL for the latest version of R Studio Server. Preview versions can be found here while stable releases can be found here. At the time of writing Sparklyr integration is a preview feature so I'm using the latest preview version of R Studio Server for 64bit RedHat/CentOS (should this fail at any point, then revert back to the latest stable release as all of the scripts used in this post will still run). Picking-up where we left-off in the master node's terminal window, execute the following commands,
 
 Can look for the latest available version here.
 $ wget https://download2.rstudio.org/rstudio-server-rhel-1.1.463-x86_64.rpm
@@ -1066,7 +1066,7 @@ Automating the starting of RStudio Server
 • Create a script Rstudio in /etc/init.d
 #!/bin/sh
 /usr/lib/rstudio-server/extras/init.d/redhat/rstudio-server start
-Don’t forget to run
+Don't forget to run
 chmod +x /etc/init.d/RStudio
 
 Stop 
@@ -1102,4 +1102,483 @@ devtools::install_github("tidyverse/dplyr")
 # Start RSutdio
 $ rstudio-server restart
 $ ps aux | grep myuser
+```
+
+## Apache Ranger Configuration
+```
+Apache Ranger provides a comprehensive approach to security management for the Hadoop ecosystem. It enables fine-grained access control to various services like HDFS, Hive, HBase, etc.
+
+### Prerequisites
+- Ensure Ambari Server is set up and running
+- PostgreSQL database is installed and configured
+
+### Database Setup for Ranger
+```bash
+# PostgreSQL database configuration for Ranger (already covered in previous sections)
+# Make sure the rangermeta database is created as shown earlier:
+# 
+# drop database rangermeta;
+# create database rangermeta;
+# create user ranger with password 'rangeradmin';
+# grant all privileges on database rangermeta to ranger;
+#
+# drop database rangerkmsmeta;
+# create database rangerkmsmeta;
+# create user rangerkms with password 'rangerkmsadmin';
+# grant all privileges on database rangerkmsmeta to rangerkms;
+```
+
+### Installing Ranger via Ambari
+1. Log in to Ambari web UI (http://[AMBARI_SERVER_HOST]:8080)
+2. Add Service > Apache Ranger
+3. Configure the following settings:
+   - Ranger Admin Host: [Master Node]
+   - Database Type: POSTGRES
+   - Ranger DB Host: [Master Node]
+   - Database Name: rangermeta
+   - Database Username: ranger
+   - Database Password: rangeradmin
+   - JDBC Driver: org.postgresql.Driver
+   - JDBC URL: jdbc:postgresql://[Master Node]:5432/rangermeta
+
+4. For Ranger KMS:
+   - Database Name: rangerkmsmeta
+   - Database Username: rangerkms
+   - Database Password: rangerkmsadmin
+   - JDBC URL: jdbc:postgresql://[Master Node]:5432/rangerkmsmeta
+   - KMS Master Secret Password: [your-secure-password]
+
+### Post-Installation Configuration
+1. Ranger Policy Administration:
+   - Access Ranger Admin UI: http://[RANGER_HOST]:6080
+   - Default credentials: admin/admin
+   - Change the default password immediately
+   
+2. Create service definitions for each service (HDFS, Hive, HBase, etc.)
+
+3. Configure service plugins:
+   ```bash
+   # Example - To enable Ranger plugin for HDFS
+   $ cd /usr/hdp/current/ranger-admin/
+   $ ./setup.sh
+   ```
+
+4. Restart all affected services
+```
+
+## FreeIPA Integration with Hadoop
+```
+FreeIPA provides centralized authentication, authorization, and account information by storing data about users, groups, and other objects necessary to manage the security aspects of a network of systems.
+
+### Prerequisites
+- A dedicated node for FreeIPA server (can be separate from Hadoop cluster)
+- FQDN configured for all nodes
+- Firewall ports open for FreeIPA (TCP: 80, 443, 389, 636, 88, 464, 53, UDP: 88, 464, 53, 123)
+
+### Installing FreeIPA Server
+```bash
+# On the FreeIPA server node
+$ yum install -y ipa-server ipa-server-dns
+
+# Run the setup wizard
+$ ipa-server-install --setup-dns
+
+# Follow the wizard and provide:
+# - Domain name (e.g., yogya.com)
+# - Realm name (e.g., YOGYA.COM)
+# - Directory Manager password
+# - IPA admin password
+# - DNS forwarder (optional)
+```
+
+### Setting up FreeIPA Client on Hadoop Nodes
+```bash
+# On each Hadoop node
+$ yum install -y ipa-client
+
+# Configure the client
+$ ipa-client-install --domain=yogya.com --server=ipa.yogya.com --mkhomedir
+
+# Enter the IPA admin password when prompted
+```
+
+### Integrating Hadoop with FreeIPA
+1. Configure Kerberos with FreeIPA:
+   - Log in to Ambari and navigate to Admin > Kerberos
+   - Select "Existing MIT KDC" and provide:
+     - KDC hosts: ipa.yogya.com
+     - Realm name: YOGYA.COM
+     - Admin principal: admin@YOGYA.COM
+     - Admin password: [your-ipa-admin-password]
+
+2. Create Hadoop service principals in FreeIPA:
+   ```bash
+   # Log in to FreeIPA server
+   $ kinit admin
+   
+   # Create service principals for Hadoop services
+   $ ipa service-add HTTP/hdpmaster.yogya.com
+   $ ipa service-add hdfs/hdpmaster.yogya.com
+   $ ipa service-add yarn/hdpmaster.yogya.com
+   # Continue for all required services
+   ```
+
+3. Configure SSSD for LDAP authentication on all nodes:
+   ```bash
+   $ vi /etc/sssd/sssd.conf
+   
+   [domain/yogya.com]
+   id_provider = ipa
+   auth_provider = ipa
+   ipa_domain = yogya.com
+   ipa_server = ipa.yogya.com
+   
+   [sssd]
+   domains = yogya.com
+   services = nss, pam, ssh, sudo
+   config_file_version = 2
+   
+   [nss]
+   filter_groups = root
+   filter_users = root
+   
+   $ systemctl restart sssd
+   ```
+
+4. Test the integration:
+   ```bash
+   $ id user1@yogya.com
+   ```
+```
+
+## Hue Installation and Configuration
+```
+Hue is a web-based interface for analyzing data with Apache Hadoop. It provides a suite of applications for querying, browsing, and visualizing data.
+
+### Prerequisites
+- Hadoop cluster installed and configured
+- Python 2.7+ and its development tools
+
+### Installation Method 1: Using Ambari
+If you're using a Hortonworks distribution that includes Hue:
+
+1. In Ambari UI, go to "Add Service"
+2. Select "Hue" and follow the installation wizard
+3. Configure Hue to connect to the Hadoop services
+
+### Installation Method 2: Manual Installation
+If not available in your Ambari distribution:
+
+```bash
+# Install dependencies
+$ yum install -y git ant asciidoc cyrus-sasl-devel cyrus-sasl-gssapi cyrus-sasl-plain gcc gcc-c++ krb5-devel libffi-devel libxml2-devel libxslt-devel make mysql mysql-devel openldap-devel python-devel sqlite-devel gmp-devel
+
+# Download Hue
+$ cd /opt
+$ git clone https://github.com/cloudera/hue.git
+$ cd hue
+
+# Build Hue
+$ make apps
+
+# Configuration
+$ vi desktop/conf/hue.ini
+
+# Configure at minimum:
+# [hadoop]
+# [[hdfs_clusters]]
+# [[[default]]]
+# fs_defaultfs=hdfs://hdpmaster.yogya.com:8020
+# webhdfs_url=http://hdpmaster.yogya.com:50070/webhdfs/v1
+#
+# [[yarn_clusters]]
+# [[[default]]]
+# resourcemanager_host=hdpmaster.yogya.com
+# resourcemanager_port=8050
+#
+# [beeswax]
+# hive_server_host=hdpmaster.yogya.com
+# hive_server_port=10000
+```
+
+### Configure LDAP Authentication (Optional)
+```bash
+$ vi desktop/conf/hue.ini
+
+[desktop]
+[[auth]]
+backend=desktop.auth.backend.LdapBackend
+
+[[ldap]]
+base_dn="dc=yogya,dc=com"
+bind_dn="uid=admin,cn=users,cn=accounts,dc=yogya,dc=com"
+bind_password=your_password
+search_bind_authentication=true
+ldap_url=ldap://ipa.yogya.com:389
+user_filter="objectclass=person"
+user_name_attr=uid
+group_filter="objectclass=groupofnames"
+group_member_attr=member
+```
+
+### Start Hue
+```bash
+$ build/env/bin/supervisor
+```
+
+### Access Hue UI
+Open a browser and navigate to:
+http://[HUE_SERVER_HOST]:8888
+
+Default credentials: admin/admin
+```
+
+## Apache Airflow Installation and Configuration
+```
+Apache Airflow is a platform to programmatically author, schedule, and monitor workflows.
+
+### Prerequisites
+- Python 3.6+ (recommended)
+- pip package manager
+- Database (PostgreSQL recommended)
+
+### Installation Steps
+```bash
+# Install Python dependencies
+$ yum install -y python3 python3-pip python3-devel
+
+# Create a dedicated user for Airflow
+$ useradd -m -d /opt/airflow airflow
+$ passwd airflow
+
+# Switch to airflow user
+$ su - airflow
+
+# Create virtual environment
+$ python3 -m venv airflow_env
+$ source airflow_env/bin/activate
+
+# Install Airflow with PostgreSQL and other needed providers
+$ pip install apache-airflow[postgres,hdfs,hive,jdbc,ssh]==2.2.4
+
+# Configure Airflow to use PostgreSQL
+$ vi ~/airflow/airflow.cfg
+
+# Change the following:
+# executor = LocalExecutor
+# sql_alchemy_conn = postgresql+psycopg2://airflow:airflow@localhost/airflow
+
+# Create PostgreSQL database for Airflow
+$ su - postgres
+$ psql
+postgres=# CREATE DATABASE airflow;
+postgres=# CREATE USER airflow WITH PASSWORD 'airflow';
+postgres=# GRANT ALL PRIVILEGES ON DATABASE airflow TO airflow;
+postgres=# \q
+$ su - airflow
+$ source airflow_env/bin/activate
+
+# Initialize the database
+$ airflow db init
+
+# Create a user for the web interface
+$ airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com
+# Enter password when prompted
+
+# Create systemd services for Airflow components
+$ su - root
+$ vi /etc/systemd/system/airflow-webserver.service
+[Unit]
+Description=Airflow webserver daemon
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Environment=AIRFLOW_HOME=/opt/airflow/airflow
+User=airflow
+Group=airflow
+Type=simple
+ExecStart=/opt/airflow/airflow_env/bin/airflow webserver
+Restart=on-failure
+RestartSec=5s
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+
+$ vi /etc/systemd/system/airflow-scheduler.service
+[Unit]
+Description=Airflow scheduler daemon
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Environment=AIRFLOW_HOME=/opt/airflow/airflow
+User=airflow
+Group=airflow
+Type=simple
+ExecStart=/opt/airflow/airflow_env/bin/airflow scheduler
+Restart=on-failure
+RestartSec=5s
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+
+# Enable and start services
+$ systemctl daemon-reload
+$ systemctl enable airflow-webserver airflow-scheduler
+$ systemctl start airflow-webserver airflow-scheduler
+```
+
+### Integrating Airflow with Hadoop
+Create a Hadoop connection in Airflow:
+
+1. In the Airflow UI (http://[AIRFLOW_HOST]:8080), go to Admin > Connections
+2. Create a new connection:
+   - Conn Id: hadoop_default
+   - Conn Type: HDFS
+   - Host: hdpmaster.yogya.com
+   - Port: 8020
+   - Extra: {"webhdfs_url": "http://hdpmaster.yogya.com:50070/webhdfs/v1/"}
+
+3. For Hive, create another connection:
+   - Conn Id: hive_cli_default
+   - Conn Type: Hive Server 2 Thrift
+   - Host: hdpmaster.yogya.com
+   - Login: hive
+   - Password: [Hive password]
+   - Port: 10000
+```
+
+## Apache Metron Installation and Configuration
+```
+Apache Metron is a cybersecurity application framework that provides telemetry monitoring with a scalable, centralized service for storing and accessing diverse security data.
+
+### Prerequisites
+- A properly configured Ambari-managed Hadoop cluster
+- Required components: HDFS, HBase, Kafka, Storm, Zookeeper
+- At least 16GB RAM on each node
+- Minimum 4 cores per node
+
+### Installation Steps
+1. Download and set up Metron repository:
+
+```bash
+# Download Metron Management Pack for Ambari
+$ cd /tmp
+$ wget https://archive.apache.org/dist/metron/1.0.0/metron-1.0.0-1.mpack
+
+# Install the management pack
+$ ambari-server install-mpack --mpack=/tmp/metron-1.0.0-1.mpack
+
+# Restart Ambari Server
+$ ambari-server restart
+```
+
+2. Using Ambari UI, add Metron service:
+   - Log in to Ambari (http://[AMBARI_HOST]:8080)
+   - Go to "Add Service"
+   - Select "Metron" and follow the installation wizard
+   - Assign components to appropriate hosts:
+     * Metron Client: All nodes
+     * Metron Parsers: At least one node
+     * Metron Enrichment: At least one node
+     * Metron Profiler: At least one node
+     * Metron REST: One node
+     * Metron UI: One node
+     * Metron Alerts UI: One node
+
+3. Configure Metron:
+   - Customize configurations as needed
+   - Set up Kafka topics for sensor data
+   - Configure parser configurations
+
+4. Post-Installation:
+   - Configure and enable data sources
+   - Deploy parsers for your data sources:
+   
+   ```bash
+   $ cd /usr/metron/current/bin
+   $ ./start_parser_topology.sh -k [KAFKA_BROKER_URL] -z [ZOOKEEPER_URL] -s [SENSOR_TYPE]
+   ```
+
+5. Metron UI Access:
+   - Metron UI: http://[METRON_UI_HOST]:5000
+   - Alerts UI: http://[METRON_ALERTS_UI_HOST]:4201
+
+### Adding Data Sources to Metron
+1. Define the sensor in Metron:
+   ```bash
+   $ cd /usr/metron/current/config
+   $ vi sensors/mysensor.json
+   {
+     "sensorName": "mysensor",
+     "parserClassName": "org.apache.metron.parsers.csv.CSVParser",
+     "parserConfig": {
+       "columns": ["timestamp", "source_ip", "dest_ip", "protocol", "payload"]
+     },
+     "fieldTransformations": [
+       {
+         "input": ["source_ip"],
+         "output": ["host"],
+         "transformation": "IP_PROTOCOL",
+         "config": { }
+       }
+     ]
+   }
+   ```
+
+2. Upload the configuration:
+   ```bash
+   $ /usr/metron/current/bin/zk_load_configs.sh --mode PUSH -i /usr/metron/current/config/sensors -z [ZOOKEEPER_URL]
+   ```
+
+3. Create Kafka topic for the sensor:
+   ```bash
+   $ /usr/hdp/current/kafka-broker/bin/kafka-topics.sh --create --zookeeper [ZOOKEEPER_URL] --replication-factor 1 --partitions 1 --topic mysensor
+   ```
+
+4. Start the parser:
+   ```bash
+   $ /usr/metron/current/bin/start_parser_topology.sh -k [KAFKA_BROKER_URL] -z [ZOOKEEPER_URL] -s mysensor
+   ```
+```
+
+## Troubleshooting Common Issues
+```
+### Apache Ranger
+- Issue: Ranger Admin UI not accessible
+  Solution: Check if the service is running: `service ranger-admin status` and verify firewall settings
+
+- Issue: Ranger policies not being enforced
+  Solution: Verify the plugin is enabled for the service and restart the affected service
+
+### FreeIPA
+- Issue: FreeIPA client registration fails
+  Solution: Verify DNS is properly configured and hostname resolution works
+
+- Issue: Kerberos authentication fails
+  Solution: Check time synchronization between all nodes using NTP
+
+### Hue
+- Issue: "Unable to create home directory" error
+  Solution: Ensure HDFS permissions are set correctly: `sudo -u hdfs hdfs dfs -chmod 777 /user`
+
+- Issue: Cannot connect to Hive
+  Solution: Verify Hive server is running and check Hue's hive configuration in hue.ini
+
+### Airflow
+- Issue: "No module named 'MySQLdb'" error
+  Solution: Install the required package: `pip install mysqlclient`
+
+- Issue: DAGs not appearing in the UI
+  Solution: Check file permissions on the DAGs folder and verify the DAG file syntax
+
+### Apache Metron
+- Issue: Parser topology fails to start
+  Solution: Check Storm UI for error messages and verify Kafka topics exist
+
+- Issue: Enrichment not working
+  Solution: Verify the enrichment configurations in ZooKeeper and check if enrichment topology is running
 ```
